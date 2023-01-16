@@ -40,7 +40,7 @@ class Envs:
         self.prev_net_worth = self.initial_balance
         self.buy  = 0
         self.sell = 0
-        self.hold = 0
+        self.held = 0
         self.episode_orders = 0
         self.env_steps_size = env_steps_size
 
@@ -55,7 +55,7 @@ class Envs:
         for i in reversed(range(self.lookback_window_size)):
             current_step = self.current_step - i
             self.orders_history.append([
-                self.balance,self.net_worth,self.buy,self.sell,self.hold
+                self.balance,self.net_worth,self.buy,self.sell,self.held
             ])
             self.market_history.append([
                 self.df.loc[current_step,'Open'],
@@ -79,10 +79,61 @@ class Envs:
                                     ])
         obs = np.concatenate((self.market_history, self.orders_history), axis=1)
         return obs
-    def step(self):
-        pass
-    def reader(self):
-        pass
+    def step(self,action):
+        self.buy = 0
+        self.sell = 0 
+        self.current_step += 1
+
+        # Set the current price to a random price between open and close
+        current_price = random.uniform(
+            self.df.loc[self.current_step, 'Open'],
+            self.df.loc[self.current_step, 'Close'])
+        # for visualization
+        Date = self.df.loc[self.current_step, 'Date'] 
+        High = self.df.loc[self.current_step, 'High'] 
+        Low = self.df.loc[self.current_step, 'Low']
+
+        if action == 0:
+            pass
+        elif action == 1 and self.balance > self.initial_balance / 100:
+            self.buy = self.balance / current_price
+            self.balance -= self.buy * current_price
+            self.held += self.buy 
+            self.trades.append({'Date' : Date, 'High' : High, 'Low' : Low, 'total': self.buy, 'type': "buy"})
+            self.episode_orders += 1
+        elif action == 2 and self.held > 0:
+            self.sell = self.held
+            self.balance += self.sell * current_price
+            self.held -= self.sell
+            self.trades.append({'Date' : Date, 'High' : High, 'Low' : Low, 'total': self.sell, 'type': "sell"})
+            self.episode_orders += 1
+
+        self.prev_net_worth = self.net_worth
+        self.net_worth = self.balance + self.held * current_price
+
+        self.orders_history.append([self.balance, self.net_worth, self.buy, self.sell, self.held])
+        reward = self.net_worth - self.prev_net_worth
+        if self.net_worth <= self.initial_balance/2:
+            done = True
+        else:
+            done = False
+
+        obs = self._next_observation() / self.normalize_value
+        
+        return obs, reward, done
+
+    def render(self, visualize = False):
+        if visualize:
+            Date = self.df.loc[self.current_step, 'Date']
+            Open = self.df.loc[self.current_step, 'Open']
+            Close = self.df.loc[self.current_step, 'Close']
+            High = self.df.loc[self.current_step, 'High']
+            Low = self.df.loc[self.current_step, 'Low']
+            Volume = self.df.loc[self.current_step, 'Volume']
+
+            # Render the environment to the screen
+            self.visualization.render(Date, Open, High, Low, Close, Volume, self.net_worth, self.trades)
+            
     def get_gaes(self):
         '''
         gaes: Generalized Advantage Estimation

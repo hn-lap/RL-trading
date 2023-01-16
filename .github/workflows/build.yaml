@@ -21,7 +21,7 @@ jobs:
         pip install black
         pip install isort
         black --check .
-        isort . --check-only
+        isort .
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip

@@ -20,8 +20,8 @@ jobs:
       run: |
         pip install black
         pip install isort
-        black .
-        isort .
+        black --check .
+        isort . --check-only
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip

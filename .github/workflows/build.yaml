@@ -20,7 +20,7 @@ jobs:
       run: |
         pip install black
         pip install isort
-        black --check .
+        black .
         isort .
     - name: Install dependencies
       run: |

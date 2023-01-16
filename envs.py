@@ -4,8 +4,9 @@ import pandas as pd
 
 class Envs:
     def __init__(self) -> None:
+        
         pass
-    def create_log(self):
+    def create_tracking_log(self):
         pass
     def reset(self):
         pass
@@ -16,6 +17,10 @@ class Envs:
     def reader(self):
         pass
     def get_gaes(self):
+        '''
+        gaes: Generalized Advantage Estimation
+        refers: https://arxiv.org/abs/1506.02438
+        '''
         pass
     def replay(self):
         pass

@@ -1,17 +1,24 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import backend as K
+from tensorflow.keras.models import Model
 
 tf.compat.v1.disable_eager_execution()  # usually using this for fastest performance
+gpus = tf.config.experimental.list_physical_devices("GPU")
+if len(gpus) > 0:
+    print(f"GPUs {gpus}")
+    try:
+        tf.config.experimental.set_memory_growth(gpus[0], True)
+    except RuntimeError:
+        pass
 
 
 class Actor_Model:
     def __init__(self, input_shape, action_shape) -> None:
         self.input_shape = input_shape
         self.action_space = action_shape
-        self.model = self._make_model(
-            input_shape=input_shape, action_shape=action_shape
-        )
+        self.model = self._make_model(input_shape=input_shape, action_shape=action_shape)
+        self.model.compile(loss=self.ppo_loss, optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
 
     def _make_model(self, input_shape, action_shape):
         x_input = tf.keras.layers.Input(input_shape)
@@ -21,13 +28,10 @@ class Actor_Model:
         x = tf.keras.layers.Dense(units=64, activation="relu")(x)
         out = tf.keras.layers.Dense(units=action_shape, activation="softmax")(x)
 
-        model = tf.keras.models.Model(inputs=x_input, outputs=out)
-        model.compile(
-            loss=self._ppo_loss, optimizer=tf.keras.optimizers.Adam(learning_rate=0.001)
-        )
+        model = Model(inputs=x_input, outputs=out)
         return model
 
-    def _ppo_loss(self, y_true, y_pred):
+    def ppo_loss(self, y_true, y_pred):
         # Defined in https://arxiv.org/abs/1707.06347
         advantages, prediction_picks, actions = (
             y_true[:, :1],
@@ -46,10 +50,7 @@ class Actor_Model:
         ratio = K.exp(K.log(prob) - K.log(old_prob))
 
         p1 = ratio * advantages
-        p2 = (
-            K.clip(ratio, min_value=1 - LOSS_CLIPPING, max_value=1 + LOSS_CLIPPING)
-            * advantages
-        )
+        p2 = K.clip(ratio, min_value=1 - LOSS_CLIPPING, max_value=1 + LOSS_CLIPPING) * advantages
 
         actor_loss = -K.mean(K.minimum(p1, p2))
 
@@ -62,6 +63,16 @@ class Actor_Model:
 
     def predict(self, state):
         return self.model.predict(state)
+
+    def fit(self, states, y_true, epochs=1, verbose=0, shuffle=True):
+        a_loss = self.model.fit(states, y_true, epochs=1, verbose=0, shuffle=True)
+        return a_loss
+
+    def saved_weights(self, file_name: str):
+        self.model.save_weights(filepath=file_name)
+
+    def loading_weights(self, file_name: str):
+        self.model.load_weights(filepath=file_name)
 
 
 class Critic_Model:
@@ -77,9 +88,7 @@ class Critic_Model:
         out = tf.keras.layers.Dense(units=1, activation=None)(x)
 
         model = tf.keras.models.Model(inputs=x_input, outputs=out)
-        model.compile(
-            loss=self._ppo_loss, optimizer=tf.keras.optimizers.Adam(learning_rate=0.001)
-        )
+        model.compile(loss=self._ppo_loss, optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
         return model
 
     def _ppo_loss(self, y_true, y_pred):
@@ -87,3 +96,13 @@ class Critic_Model:
 
     def predict(self, state):
         return self.model.predict([state, np.zeros((state.shape[0], 1))])
+
+    def fit(self, states, target, epochs=1, verbose=0, shuffle=True):
+        a_loss = self.model.fit(states, target, epochs=1, verbose=0, shuffle=True)
+        return a_loss
+
+    def saved_weights(self, file_name: str):
+        self.model.save_weights(filepath=file_name)
+
+    def loading_weights(self, file_name: str):
+        self.model.load_weights(filepath=file_name)

@@ -34,14 +34,16 @@ class Envs:
         self.orders_history = deque(maxlen=self.lookback_windowsize)
         # Market history contains the OHCL values for the last lookback_window_size prices
         self.market_history = deque(maxlen=self.lookback_windowsize)
+        self.rewards = deque(maxlen=self.reader_range)
 
-        self.actor_model = Actor_Model(
-            input_shape=self.state_size, action_shape=self.action_space.shape[0]
-        )
+        self.actor_model = Actor_Model(input_shape=self.state_size, action_shape=self.action_space.shape[0])
         self.critic_model = Critic_Model(input_shape=self.state_size)
 
         self.normalize_value = 100000
-        
+        self.episode_orders = 0  # track episode orders count
+        self.prev_episode_orders = 0  # track previous episode orders count
+        self.punish_value = 0
+
     def create_tracking_log(self):
         self.replay_count = 0
         self.writer = SummaryWriter(comment="Trading")
@@ -60,9 +62,7 @@ class Envs:
         self.env_steps_size = env_steps_size
 
         if env_steps_size > 0:  # use for training dataset
-            self.start_step = random.randint(
-                self.lookback_windowsize, (self.len_df - env_steps_size)
-            )
+            self.start_step = random.randint(self.lookback_windowsize, (self.len_df - env_steps_size))
             self.end_step = self.start_step + env_steps_size
         else:
             self.start_step = self.lookback_windowsize
@@ -71,9 +71,7 @@ class Envs:
         self.current_step = self.start_step
         for i in reversed(range(self.lookback_windowsize)):
             current_step = self.current_step - i
-            self.orders_history.append(
-                [self.balance, self.net_worth, self.buy, self.sell, self.held]
-            )
+            self.orders_history.append([self.balance, self.net_worth, self.buy, self.sell, self.held])
             self.market_history.append(
                 [
                     self.df.loc[current_step, "Open"],
@@ -129,6 +127,7 @@ class Envs:
                     "Low": Low,
                     "total": self.buy,
                     "type": "buy",
+                    "current_price": current_price,
                 }
             )
             self.episode_orders += 1
@@ -143,6 +142,7 @@ class Envs:
                     "Low": Low,
                     "total": self.sell,
                     "type": "sell",
+                    "current_price": current_price,
                 }
             )
             self.episode_orders += 1
@@ -150,10 +150,9 @@ class Envs:
         self.prev_net_worth = self.net_worth
         self.net_worth = self.balance + self.held * current_price
 
-        self.orders_history.append(
-            [self.balance, self.net_worth, self.buy, self.sell, self.held]
-        )
-        reward = self.net_worth - self.prev_net_worth
+        self.orders_history.append([self.balance, self.net_worth, self.buy, self.sell, self.held])
+        # reward = self.net_worth - self.prev_net_worth
+        reward = self.get_reward()
         if self.net_worth <= self.initial_balance / 2:
             done = True
         else:
@@ -162,6 +161,31 @@ class Envs:
         obs = self._next_observation() / self.normalize_value
 
         return obs, reward, done
+
+    def get_reward(self):
+        self.punish_value += self.net_worth * 0.00001
+        if self.episode_orders > 1 and self.episode_orders > self.prev_episode_orders:
+            self.prev_episode_orders = self.episode_orders
+            if self.trades[-1]["type"] == "buy" and self.trades[-2]["type"] == "sell":
+                reward = (
+                    self.trades[-2]["total"] * self.trades[-2]["current_price"]
+                    - self.trades[-2]["total"] * self.trades[-1]["current_price"]
+                )
+                reward -= self.punish_value
+                self.punish_value = 0
+                self.trades[-1]["Reward"] = reward
+                return reward
+            elif self.trades[-1]["type"] == "sell" and self.trades[-2]["type"] == "buy":
+                reward = (
+                    self.trades[-1]["total"] * self.trades[-1]["current_price"]
+                    - self.trades[-2]["total"] * self.trades[-2]["current_price"]
+                )
+                reward -= self.punish_value
+                self.punish_value = 0
+                self.trades[-1]["Reward"] = reward
+                return reward
+        else:
+            return 0 - self.punish_value
 
     def render(self, visualize=False):
         if visualize:
@@ -173,9 +197,9 @@ class Envs:
             Volume = self.df.loc[self.current_step, "Volume"]
 
             # Render the environment to the screen
-            self.visualization.render(
-                Date, Open, High, Low, Close, Volume, self.net_worth, self.trades
-            )
+            self.visualization.render(Date, Open, High, Low, Close, Volume, self.net_worth, self.trades)
+        # else:
+        #     print(self.trades)
 
     def get_gaes(
         self,
@@ -191,10 +215,7 @@ class Envs:
         gaes: Generalized Advantage Estimation
         refers: https://arxiv.org/abs/1506.02438
         """
-        deltas = [
-            r + gamma * (1 - d) * nv - v
-            for r, d, nv, v in zip(rewards, dones, next_values, values)
-        ]
+        deltas = [r + gamma * (1 - d) * nv - v for r, d, nv, v in zip(rewards, dones, next_values, values)]
         deltas = np.stack(deltas)
         gaes = copy.deepcopy(deltas)
         for t in reversed(range(len(deltas) - 1)):
@@ -214,23 +235,19 @@ class Envs:
         next_states: List[np.array],
     ):
         states = np.vstack(states)
-        next_states = np.vstack(states)
+        next_states = np.vstack(next_states)
         actions = np.vstack(actions)
         predictions = np.vstack(predictions)
 
         values = self.critic_model.predict(states)
         next_values = self.critic_model.predict(next_states)
 
-        advantages, target = self.get_gaes(
-            rewards, dones, np.squeeze(values), np.squeeze(next_values)
-        )
+        advantages, target = self.get_gaes(rewards, dones, np.squeeze(values), np.squeeze(next_values))
 
         y_true = np.hstack([advantages, predictions, actions])
 
         a_loss = self.actor_model.fit(states, y_true, epochs=1, verbose=0, shuffle=True)
-        c_loss = self.critic_model.fit(
-            states, target, epochs=1, verbose=0, shuffle=True
-        )
+        c_loss = self.critic_model.fit(states, target, epochs=1, verbose=0, shuffle=True)
 
         self.writer.add_scalar(
             "Data/actor_loss_per_replay",
@@ -246,16 +263,16 @@ class Envs:
 
     def act(self, state):
         # Use the network to predict the next action to take, using the model
-        prediction = self.Actor.predict(np.expand_dims(state, axis=0))[0]
+        prediction = self.actor_model.predict(np.expand_dims(state, axis=0))[0]
         action = np.random.choice(self.action_space, p=prediction)
         return action, prediction
 
-    def save(self, name="Crypto_trader"):
+    def save(self, name="trader"):
         # save keras model weights
-        self.actor_model.save_weights(f"{name}_Actor.h5")
-        self.critic_model.save_weights(f"{name}_Critic.h5")
+        self.actor_model.saved_weights(f"{name}_Actor.h5")
+        self.critic_model.saved_weights(f"{name}_Critic.h5")
 
-    def load(self, name="Crypto_trader"):
+    def load(self, name="trader"):
         # load keras model weights
-        self.actor_model.load_weights(f"{name}_Actor.h5")
-        self.critic_model.load_weights(f"{name}_Critic.h5")
+        self.actor_model.loading_weights(f"{name}_Actor.h5")
+        self.critic_model.loading_weights(f"{name}_Critic.h5")

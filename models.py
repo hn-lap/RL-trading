@@ -4,7 +4,9 @@ from tensorflow.keras import backend as K
 from tensorflow.keras.models import Model
 
 tf.compat.v1.disable_eager_execution()  # usually using this for fastest performance
+
 gpus = tf.config.experimental.list_physical_devices("GPU")
+
 if len(gpus) > 0:
     print(f"GPUs {gpus}")
     try:

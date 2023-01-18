@@ -3,7 +3,7 @@ from collections import deque
 import numpy as np
 import pandas as pd
 
-from envs import Envs
+from envs.stock_envs import Envs
 
 
 def random_games(env, visualize, train_episodes=50):
@@ -107,6 +107,6 @@ if __name__ == "__main__":
         render_range=100,
     )
 
-    train_agent(train_env, visualize=True, train_episodes=1000, training_batch_size=500)
-    # test_agent(test_env, visualize=True, test_episodes=1000)
+    # train_agent(train_env, visualize=True, train_episodes=1000, training_batch_size=500)
+    test_agent(test_env, visualize=True, test_episodes=500)
     # random_games(test_env, visualize=True, train_episodes=500)
